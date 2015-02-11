@@ -11,22 +11,29 @@
 use warnings;
 use strict;
 
+use File::Path qw(make_path);
+use File::Basename;
 use IO::Socket::INET;
 
 my $BUFFER_SIZE = 64 * 1024; # 64k buffer
+my $CACHEDIR = "cache"; # default is $(pwd)/cache
+
+my $port = 3128;
 
 my $listen = IO::Socket::INET->new(
 	Listen => 5,
-	LocalPort => 3128,
+	LocalPort => $port,
 	Proto => "tcp",
 	ReuseAddr => 1,
 );
+
+print STDERR "Listening on $port\n" if $ENV{DEBUG};
 
 while (my $accept = $listen->accept()) {
 	$_ = <$accept>;
 	s/\n$//; s/\r$//;
 	my ($method, $url, $version) = split(/ +/, $_);
-	print STDERR "$method, $url, $version\n";
+	print STDERR "$method, $url, $version\n" if $ENV{DEBUG};
 
 	# Only supporting GET
 	next unless $method eq "GET";
@@ -35,7 +42,7 @@ while (my $accept = $listen->accept()) {
 	my %headers;
 	while (<$accept>) {
 		s/\n$//; s/\r$//;
-		print STDERR "'$_'\n";
+		print STDERR "'$_'\n" if $ENV{DEBUG};
 
 		last unless $_; # stop on empty line
 		next unless m/^([^:]+): (.+)$/;
@@ -46,7 +53,7 @@ while (my $accept = $listen->accept()) {
 	# We parse the URL
 	next unless $url =~ m,^([^:]+)://([^/]+)/(.*)$,;
 	my ($scheme, $host, $fullpath) = ($1, $2, $3);
-	print STDERR "$scheme, $host, $fullpath\n";
+	print STDERR "$scheme, $host, $fullpath\n" if $ENV{DEBUG};
 
 	# Only supporting HTTP
 	next unless lc($scheme) eq "http";
@@ -59,7 +66,7 @@ while (my $accept = $listen->accept()) {
 		Proto => "tcp",
 	);
 
-	print STDERR "$upstream\n";
+	print STDERR "$upstream\n" if $ENV{DEBUG};
 	next unless $upstream;
 
 	print $upstream "GET /$fullpath HTTP/1.0\r\n";
@@ -75,7 +82,7 @@ while (my $accept = $listen->accept()) {
 	$_ = <$upstream>;
 	s/\n$//; s/\r$//;
 	my ($reply_version, $status, $comment) = split(/ +/, $_, 3);
-	print STDERR "$reply_version, $status, $comment\n";
+	print STDERR "$reply_version, $status, $comment\n" if $ENV{DEBUG};
 
 	# Only supporting HTTP 200 OK and 301/302 REDIRECTS
 	next unless $status =~ m/^(200|301|302)$/;
@@ -84,7 +91,7 @@ while (my $accept = $listen->accept()) {
 	my %reply_headers;
 	while (<$upstream>) {
 		s/\n$//; s/\r$//;
-		print STDERR "'$_'\n";
+		print STDERR "'$_'\n" if $ENV{DEBUG};
 
 		last unless $_; # stop on empty line
 		next unless m/^([^:]+): (.+)$/;
@@ -108,8 +115,25 @@ while (my $accept = $listen->accept()) {
 
 	print $accept "\r\n";
 
-	# pass upstream to downstream
-	copy_data_mono($upstream, $accept);
+	# pass upstream to downstream, and writing it locally
+	my ($url_path, $query_string) = split(/\?/, $fullpath, 2);
+	print STDERR "$url_path, $query_string\n" if $ENV{DEBUG};
+
+	# Sanitize $url_path & $query_string
+	$url_path =~ s,/\.\./,%2F..%2F%0A,g;
+	$query_string =~ s,/,%2F,g if $query_string;
+
+	my $cache_filename = "$CACHEDIR/$url_path";
+	$cache_filename .= "?" . $query_string if $query_string;
+
+	# Ensure the directory exists
+	my $cache_dirname = dirname($cache_filename);
+	print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
+	make_path($cache_dirname);
+
+	my $cache_file = IO::File->new("$cache_filename", "w");
+
+	copy_data_mono($upstream, $accept, $cache_file);
 }
 
 sub copy_data_mono {
