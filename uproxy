@@ -113,10 +113,14 @@ while (my $accept = $listen->accept()) {
 }
 
 sub copy_data_mono {
-	my ($src, $dst) = @_;
+	my $src = shift;
+	my @dsts = @_;
 
 	my $buf;
 	while (my $read_len = read($src, $buf, $BUFFER_SIZE)) {
-		print $dst $buf;
+		for my $dst (@dsts) {
+			# write() is *not* the opposite of read(), print() is.
+			print $dst $buf;
+		}
 	}
 }
