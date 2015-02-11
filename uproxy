@@ -13,6 +13,8 @@ use strict;
 
 use IO::Socket::INET;
 
+my $BUFFER_SIZE = 64 * 1024; # 64k buffer
+
 my $listen = IO::Socket::INET->new(
 	Listen => 5,
 	LocalPort => 3128,
@@ -24,16 +26,97 @@ while (my $accept = $listen->accept()) {
 	$_ = <$accept>;
 	s/\n$//; s/\r$//;
 	my ($method, $url, $version) = split(/ +/, $_);
-	print "$method, $url, $version\n";
+	print STDERR "$method, $url, $version\n";
+
+	# Only supporting GET
+	next unless $method eq "GET";
 
 	# fetch the request headers
-	my @headers;
+	my %headers;
 	while (<$accept>) {
 		s/\n$//; s/\r$//;
-		print "'$_'\n";
+		print STDERR "'$_'\n";
 
 		last unless $_; # stop on empty line
-		push @headers, $_;
+		next unless m/^([^:]+): (.+)$/;
+
+		$headers{$1} = $2;
 	}
 
+	# We parse the URL
+	next unless $url =~ m,^([^:]+)://([^/]+)/(.*)$,;
+	my ($scheme, $host, $fullpath) = ($1, $2, $3);
+	print STDERR "$scheme, $host, $fullpath\n";
+
+	# Only supporting HTTP
+	next unless lc($scheme) eq "http";
+
+	# Set the default port
+	$host .= ":80" unless $host =~ m/:/;
+
+	my $upstream = IO::Socket::INET->new(
+		PeerAddr => $host,
+		Proto => "tcp",
+	);
+
+	print STDERR "$upstream\n";
+	next unless $upstream;
+
+	print $upstream "GET /$fullpath HTTP/1.0\r\n";
+	print $upstream "Connection: close\r\n"; # NO keepalive
+
+	# Only send Host header, if present
+	print $upstream "Host: ". $headers{Host} . "\r\n" if $headers{Host};
+
+	# That's it!
+	print $upstream "\r\n";
+
+	# Now, just stream it back to the client
+	$_ = <$upstream>;
+	s/\n$//; s/\r$//;
+	my ($reply_version, $status, $comment) = split(/ +/, $_, 3);
+	print STDERR "$reply_version, $status, $comment\n";
+
+	# Only supporting HTTP 200 OK and 301/302 REDIRECTS
+	next unless $status =~ m/^(200|301|302)$/;
+
+	# fetch reply headers
+	my %reply_headers;
+	while (<$upstream>) {
+		s/\n$//; s/\r$//;
+		print STDERR "'$_'\n";
+
+		last unless $_; # stop on empty line
+		next unless m/^([^:]+): (.+)$/;
+
+		$reply_headers{$1} = $2;
+	}
+
+	# Send selected reply headers
+	print $accept "HTTP/1.0 $status $comment\r\n"; # HTTP/1.0 is hard coded
+	print $accept "Location: " . $reply_headers{"Location"} . "\r\n" if $reply_headers{"Location"};
+	print $accept "Date: " . $reply_headers{"Date"} . "\r\n" if $reply_headers{"Date"};
+	print $accept "Content-Type: " . $reply_headers{"Content-Type"} . "\r\n" if $reply_headers{"Content-Type"};
+	print $accept "Content-Length: " . $reply_headers{"Content-Length"} . "\r\n" if $reply_headers{"Content-Length"};
+	print $accept "Transfer-Encoding: " . $reply_headers{"Transfer-Encoding"} . "\r\n" if $reply_headers{"Transfer-Encoding"};
+
+	print $accept "Age: " . $reply_headers{"Age"} . "\r\n" if $reply_headers{"Age"};
+	print $accept "Expires: " . $reply_headers{"Expires"} . "\r\n" if $reply_headers{"Expires"};
+	print $accept "Cache-Control: " . $reply_headers{"Cache-Control"} . "\r\n" if $reply_headers{"Cache-Control"};
+
+	print $accept "Connection: close\r\n"; # No KeepAlive.
+
+	print $accept "\r\n";
+
+	# pass upstream to downstream
+	copy_data_mono($upstream, $accept);
+}
+
+sub copy_data_mono {
+	my ($src, $dst) = @_;
+
+	my $buf;
+	while (my $read_len = read($src, $buf, $BUFFER_SIZE)) {
+		print $dst $buf;
+	}
 }
