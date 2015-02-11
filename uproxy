@@ -1,0 +1,39 @@
+#! /usr/bin/perl
+# micro HTTP caching proxy
+# (c) 2015 - GPL2 - Steve Schnepp <steve.schnepp@pwkf.org>
+#
+# It uses only core Perl modules, and is aimed for low perf hardware, such as
+# embedded NAS, where you only have a raw Perl, and installing deps is
+# cumbersome.
+#
+# TODO - It might make sense to rewrite this in C
+
+use warnings;
+use strict;
+
+use IO::Socket::INET;
+
+my $listen = IO::Socket::INET->new(
+	Listen => 5,
+	LocalPort => 3128,
+	Proto => "tcp",
+	ReuseAddr => 1,
+);
+
+while (my $accept = $listen->accept()) {
+	$_ = <$accept>;
+	s/\n$//; s/\r$//;
+	my ($method, $url, $version) = split(/ +/, $_);
+	print "$method, $url, $version\n";
+
+	# fetch the request headers
+	my @headers;
+	while (<$accept>) {
+		s/\n$//; s/\r$//;
+		print "'$_'\n";
+
+		last unless $_; # stop on empty line
+		push @headers, $_;
+	}
+
+}
