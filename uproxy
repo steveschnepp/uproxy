@@ -11,6 +11,7 @@
 use warnings;
 use strict;
 
+use File::stat;
 use File::Path qw(make_path);
 use File::Basename;
 use IO::Socket::INET;
@@ -58,10 +59,38 @@ while (my $accept = $listen->accept()) {
 	# Only supporting HTTP
 	next unless lc($scheme) eq "http";
 
+	my ($url_path, $query_string) = split(/\?/, $fullpath, 2);
+	print STDERR "$url_path, $query_string\n" if $ENV{DEBUG};
+
+	# Sanitize $url_path & $query_string
+	$url_path =~ s,/\.\./,%2F..%2F%0A,g;
+	$query_string =~ s,/,%2F,g if $query_string;
+
+	my $cache_filename = "$CACHEDIR/$url_path";
+	$cache_filename .= "?" . $query_string if $query_string;
+
+	my $st = stat($cache_filename);
+	goto REQUEST_DIRECT unless $st; # No cache, requesting from origin
+
+	# Send from $filename
+
+	my $upstream;
+	my %reply_headers;
+	($reply_version, $status, $comment) = split(/ +/, $_, 3);
+
+	$upstream = IO::File->new("$cache_filename");
+
+	%reply_headers = (
+		"Content-Length" => $st->size,
+	);
+
+	goto SEND_DOWNSTREAM;
+
+REQUEST_DIRECT:
 	# Set the default port
 	$host .= ":80" unless $host =~ m/:/;
 
-	my $upstream = IO::Socket::INET->new(
+	$upstream = IO::Socket::INET->new(
 		PeerAddr => $host,
 		Proto => "tcp",
 	);
@@ -81,14 +110,13 @@ while (my $accept = $listen->accept()) {
 	# Now, just stream it back to the client
 	$_ = <$upstream>;
 	s/\n$//; s/\r$//;
-	my ($reply_version, $status, $comment) = split(/ +/, $_, 3);
+	($reply_version, $status, $comment) = split(/ +/, $_, 3);
 	print STDERR "$reply_version, $status, $comment\n" if $ENV{DEBUG};
 
 	# Only supporting HTTP 200 OK and 301/302 REDIRECTS
 	next unless $status =~ m/^(200|301|302)$/;
 
 	# fetch reply headers
-	my %reply_headers;
 	while (<$upstream>) {
 		s/\n$//; s/\r$//;
 		print STDERR "'$_'\n" if $ENV{DEBUG};
@@ -99,6 +127,14 @@ while (my $accept = $listen->accept()) {
 		$reply_headers{$1} = $2;
 	}
 
+	# Ensure the directory exists
+	my $cache_dirname = dirname($cache_filename);
+	print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
+	make_path($cache_dirname);
+
+	my $cache_file = IO::File->new("$cache_filename", "w");
+
+SEND_DOWNSTREAM:
 	# Send selected reply headers
 	print $accept "HTTP/1.0 $status $comment\r\n"; # HTTP/1.0 is hard coded
 	print $accept "Location: " . $reply_headers{"Location"} . "\r\n" if $reply_headers{"Location"};
@@ -116,23 +152,6 @@ while (my $accept = $listen->accept()) {
 	print $accept "\r\n";
 
 	# pass upstream to downstream, and writing it locally
-	my ($url_path, $query_string) = split(/\?/, $fullpath, 2);
-	print STDERR "$url_path, $query_string\n" if $ENV{DEBUG};
-
-	# Sanitize $url_path & $query_string
-	$url_path =~ s,/\.\./,%2F..%2F%0A,g;
-	$query_string =~ s,/,%2F,g if $query_string;
-
-	my $cache_filename = "$CACHEDIR/$url_path";
-	$cache_filename .= "?" . $query_string if $query_string;
-
-	# Ensure the directory exists
-	my $cache_dirname = dirname($cache_filename);
-	print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
-	make_path($cache_dirname);
-
-	my $cache_file = IO::File->new("$cache_filename", "w");
-
 	copy_data_mono($upstream, $accept, $cache_file);
 }
 
