@@ -86,6 +86,9 @@ while (my $accept = $listen->accept()) {
 	# Fetch the stored header
 	my %stored_headers;
 	my $h = IO::File->new("$header_filename");
+
+	goto REQUEST_DIRECT unless $h;
+
 	while (<$h>) {
 		next unless m/^([^:]+): (.+)$/;
 		$stored_headers{$1} = $2;
