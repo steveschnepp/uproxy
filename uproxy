@@ -135,8 +135,8 @@ REQUEST_DIRECT:
 	($reply_version, $status, $comment) = split(/ +/, $_, 3);
 	print STDERR "$reply_version, $status, $comment\n" if $ENV{DEBUG};
 
-	# Only supporting HTTP 200 OK and 301/302 REDIRECTS
-	next unless $status =~ m/^(200|301|302)$/;
+	# Only supporting HTTP 200 OK, 301/302 REDIRECTS & 404 NOT_FOUND
+	next unless $status =~ m/^(200|301|302|404)$/;
 
 	# fetch reply headers
 	while (<$upstream>) {
@@ -149,13 +149,17 @@ REQUEST_DIRECT:
 		$reply_headers{$1} = $2;
 	}
 
-	# Ensure the directory exists
-	my $cache_dirname = dirname($cache_filename);
-	print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
-	make_path($cache_dirname);
+	# Only cache when HTTP 200
+	if ($status == 200) {
+		# Ensure the directory exists
+		my $cache_dirname = dirname($cache_filename);
+		print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
+		make_path($cache_dirname);
 
-	# Open the cache file to write in it
-	$cache_output = IO::File->new("$cache_filename", "w");
+		# Open the cache file to write in it
+		$cache_output = IO::File->new("$cache_filename", "w");
+	}
+
 
 SEND_DOWNSTREAM:
 	# Send selected reply headers
