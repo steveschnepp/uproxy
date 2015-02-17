@@ -14,11 +14,15 @@ use strict;
 use File::stat;
 use File::Path qw(make_path);
 use File::Basename;
+use Time::Local qw(timegm);
 use IO::Socket::INET;
 
 my $BUFFER_SIZE = 64 * 1024; # 64k buffer
 my $CACHEDIR = "cache"; # default is $(pwd)/cache
 my $PORT = 3128;
+
+# Fast assign MONTHS
+my %MONTHS; @MONTHS{ qw( Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec ) } = ( 0 .. 11 );
 
 # Make & go to $CACHEDIR, so everything is relative to it
 make_path($CACHEDIR);
@@ -71,7 +75,7 @@ while (my $accept = $listen->accept()) {
 
 	my $cache_filename = "$url_path";
 	$cache_filename .= "?" . $query_string if $query_string;
-	$header_filename = ".$cache_filename.header";
+	my $header_filename = "$cache_filename.header";
 
 	my $st = stat($cache_filename);
 	goto REQUEST_DIRECT unless $st; # No cache, requesting from origin
@@ -80,15 +84,19 @@ while (my $accept = $listen->accept()) {
 	my %stored_headers;
 	my $h = IO::File->new("$header_filename");
 	while (<$h>) {
+		next unless m/^([^:]+): (.+)$/;
+		$stored_headers{$1} = $2;
 	}
 
+	# Check if we can send the cached version
+	goto REQUEST_DIRECT unless is_fresh(%stored_headers);
 
-	my $upstream;
-	($reply_version, $status, $comment) = split(/ +/, $_, 3);
+	# So, it's fresh. Sending
+	my ($reply_version, $status, $comment) = qw( HTTP/1.0 200 OK_CACHE );
+	my $upstream = IO::File->new("$cache_filename");
 
-	$upstream = IO::File->new("$cache_filename");
-
-	%reply_headers = (
+	# Do not care about the real headers
+	my %reply_headers = (
 		"Content-Length" => $st->size,
 	);
 
@@ -165,11 +173,21 @@ SEND_DOWNSTREAM:
 
 	# pass upstream to downstream, and writing it locally
 	copy_data_mono($upstream, $accept, $cache_output);
+
+	# Do not save the header if sending FROM cache
+	next unless $cache_output;
+
+	$h = IO::File->new("$header_filename", "w");
+	foreach my $rh (keys %reply_headers) {
+		print $h "$rh: $reply_headers{$rh}\n";
+	}
 }
 
 sub copy_data_mono {
 	my $src = shift;
 	my @dsts = @_;
+
+	print "copy_data_mono($src, @dsts)\n" if $ENV{DEBUG};
 
 	my $buf;
 	while (my $read_len = read($src, $buf, $BUFFER_SIZE)) {
@@ -181,4 +199,37 @@ sub copy_data_mono {
 			print $dst $buf;
 		}
 	}
+}
+
+# Only cares about the HTTP/1.0 Expires header
+sub is_fresh {
+	my %headers = @_;
+
+	my $cache_control = $headers{"Cache-Control"};
+	return 0 if $cache_control && $cache_control =~ m/no-/; # Contains at least a "no-*" header
+	return 0 if $cache_control && $cache_control =~ m/private/; # Contains at least a "private" header
+
+	my $expires = parse_http_date($headers{Expires});
+	return 0 if $expires && $expires < time;
+
+	return 1;
+}
+
+# Only supports RFC 822/1123 & GMT timezone
+sub parse_http_date {
+	my $http_date = shift;
+	return undef unless $http_date;
+
+
+	# RFC 822/1123 (Tue, 17 Feb 2015 10:55:44 GMT)
+	my ($day, $dom, $mon, $year, $time, $tz) = split(/ /, $http_date);
+	my ($hour, $min, $sec) = split(/:/, $time);
+
+	# Convert textual $mon to numeric $mon
+	$mon = $MONTHS{$mon};
+
+	# Using eval, to return undef on invalid dates
+	my $epoch = eval { timegm $sec, $min, $hour, $dom, $mon, $year };
+	print STDERR "parse_http_date($http_date)=$epoch\n" if $ENV{DEBUG};
+	return $epoch;
 }
