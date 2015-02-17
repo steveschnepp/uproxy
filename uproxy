@@ -69,16 +69,21 @@ while (my $accept = $listen->accept()) {
 	$url_path =~ s,/\.\./,%2F..%2F%0A,g;
 	$query_string =~ s,/,%2F,g if $query_string;
 
-	my $cache_filename = "$CACHEDIR/$url_path";
+	my $cache_filename = "$url_path";
 	$cache_filename .= "?" . $query_string if $query_string;
+	$header_filename = ".$cache_filename.header";
 
 	my $st = stat($cache_filename);
 	goto REQUEST_DIRECT unless $st; # No cache, requesting from origin
 
 	# Fetch the stored header
+	my %stored_headers;
+	my $h = IO::File->new("$header_filename");
+	while (<$h>) {
+	}
+
 
 	my $upstream;
-	my %reply_headers;
 	($reply_version, $status, $comment) = split(/ +/, $_, 3);
 
 	$upstream = IO::File->new("$cache_filename");
@@ -86,6 +91,9 @@ while (my $accept = $listen->accept()) {
 	%reply_headers = (
 		"Content-Length" => $st->size,
 	);
+
+	# Do not sent to cache, we are reading from it
+	my $cache_output;
 
 	goto SEND_DOWNSTREAM;
 
@@ -135,7 +143,8 @@ REQUEST_DIRECT:
 	print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
 	make_path($cache_dirname);
 
-	my $cache_file = IO::File->new("$cache_filename", "w");
+	# Open the cache file to write in it
+	$cache_output = IO::File->new("$cache_filename", "w");
 
 SEND_DOWNSTREAM:
 	# Send selected reply headers
@@ -155,7 +164,7 @@ SEND_DOWNSTREAM:
 	print $accept "\r\n";
 
 	# pass upstream to downstream, and writing it locally
-	copy_data_mono($upstream, $accept, $cache_file);
+	copy_data_mono($upstream, $accept, $cache_output);
 }
 
 sub copy_data_mono {
