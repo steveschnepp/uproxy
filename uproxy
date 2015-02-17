@@ -162,6 +162,9 @@ sub copy_data_mono {
 	my $buf;
 	while (my $read_len = read($src, $buf, $BUFFER_SIZE)) {
 		for my $dst (@dsts) {
+			# Ignore undef $dst, this makes it much more flexible
+			next unless $dst;
+
 			# write() is *not* the opposite of read(), print() is.
 			print $dst $buf;
 		}
