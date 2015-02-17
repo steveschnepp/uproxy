@@ -24,6 +24,9 @@ my $PORT = 3128;
 # Fast assign MONTHS
 my %MONTHS; @MONTHS{ qw( Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec ) } = ( 0 .. 11 );
 
+# Do not die when child disconnects
+$SIG{PIPE} = 'IGNORE';
+
 # Make & go to $CACHEDIR, so everything is relative to it
 make_path($CACHEDIR);
 chdir $CACHEDIR;
@@ -181,6 +184,10 @@ SEND_DOWNSTREAM:
 	foreach my $rh (keys %reply_headers) {
 		print $h "$rh: $reply_headers{$rh}\n";
 	}
+
+	# Flush everything
+	$cache_output->flush();
+	$h->flush();
 }
 
 sub copy_data_mono {
