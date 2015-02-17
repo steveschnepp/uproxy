@@ -39,10 +39,10 @@ while (my $accept = $listen->accept()) {
 	my ($method, $url, $version) = split(/ +/, $_);
 	print STDERR "$method, $url, $version\n" if $ENV{DEBUG};
 
-	# Only supporting GET
+	# Support only GET
 	next unless $method eq "GET";
 
-	# fetch the request headers
+	# Fetch the request headers
 	my %headers;
 	while (<$accept>) {
 		s/\n$//; s/\r$//;
@@ -54,12 +54,12 @@ while (my $accept = $listen->accept()) {
 		$headers{$1} = $2;
 	}
 
-	# We parse the URL
+	# Parse the URL
 	next unless $url =~ m,^([^:]+)://([^/]+)/(.*)$,;
 	my ($scheme, $host, $fullpath) = ($1, $2, $3);
 	print STDERR "$scheme, $host, $fullpath\n" if $ENV{DEBUG};
 
-	# Only supporting HTTP
+	# Support only HTTP (no SSL)
 	next unless lc($scheme) eq "http";
 
 	my ($url_path, $query_string) = split(/\?/, $fullpath, 2);
@@ -75,7 +75,7 @@ while (my $accept = $listen->accept()) {
 	my $st = stat($cache_filename);
 	goto REQUEST_DIRECT unless $st; # No cache, requesting from origin
 
-	# Send from $filename
+	# Fetch the stored header
 
 	my $upstream;
 	my %reply_headers;
