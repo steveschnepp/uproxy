@@ -220,10 +220,13 @@ sub is_fresh {
 	my %headers = @_;
 
 	my $cache_control = $headers{"Cache-Control"};
-	return 0 if $cache_control && $cache_control =~ m/no-/; # Contains at least a "no-*" header
-	return 0 if $cache_control && $cache_control =~ m/private/; # Contains at least a "private" header
-
 	my $expires = parse_http_date($headers{Expires});
+
+	return 0 unless $cache_control || $expires; # Should have at least a CC or an Expires
+
+	return 0 if $cache_control =~ m/no-/; # Contains at least a "no-*" header
+	return 0 if $cache_control =~ m/private/; # Contains at least a "private" header
+
 	return 0 if $expires && $expires < time;
 
 	return 1;
