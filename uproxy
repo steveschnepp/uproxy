@@ -18,17 +18,20 @@ use IO::Socket::INET;
 
 my $BUFFER_SIZE = 64 * 1024; # 64k buffer
 my $CACHEDIR = "cache"; # default is $(pwd)/cache
+my $PORT = 3128;
 
-my $port = 3128;
+# Make & go to $CACHEDIR, so everything is relative to it
+make_path($CACHEDIR);
+chdir $CACHEDIR;
 
 my $listen = IO::Socket::INET->new(
 	Listen => 5,
-	LocalPort => $port,
+	LocalPort => $PORT,
 	Proto => "tcp",
 	ReuseAddr => 1,
 );
 
-print STDERR "Listening on $port\n" if $ENV{DEBUG};
+print STDERR "Listening on $PORT\n" if $ENV{DEBUG};
 
 while (my $accept = $listen->accept()) {
 	$_ = <$accept>;
