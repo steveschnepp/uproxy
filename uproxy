@@ -152,8 +152,8 @@ REQUEST_DIRECT:
 		$reply_headers{$1} = $2;
 	}
 
-	# Only cache when HTTP 200
-	if ($status == 200) {
+	# Only cache when HTTP 200 & nice headers
+	if ($status == 200 && is_fresh(%reply_headers)) {
 		# Ensure the directory exists
 		my $cache_dirname = dirname($cache_filename);
 		print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
