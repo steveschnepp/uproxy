@@ -21,6 +21,9 @@ my $BUFFER_SIZE = 64 * 1024; # 64k buffer
 my $CACHEDIR = "cache"; # default is $(pwd)/cache
 my $PORT = 3128;
 
+# No buffering
+$| = 1;
+
 # Fast assign MONTHS
 my %MONTHS; @MONTHS{ qw( Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec ) } = ( 0 .. 11 );
 
@@ -46,6 +49,12 @@ while (my $accept = $listen->accept()) {
 	my ($method, $url, $version) = split(/ +/, $_);
 	print STDERR "$method, $url, $version\n" if $ENV{DEBUG};
 
+	# method CONNECT bypasses everything
+	if ($method eq "CONNECT") {
+		_connect($url, $accept) ;
+		 next;
+	}
+
 	# Support only GET
 	next unless $method eq "GET";
 
@@ -70,6 +79,8 @@ while (my $accept = $listen->accept()) {
 	next unless lc($scheme) eq "http";
 
 	my ($url_path, $query_string) = split(/\?/, $fullpath, 2);
+	$url_path = "" unless defined $url_path;
+	$query_string = "" unless defined $query_string;
 	print STDERR "$url_path, $query_string\n" if $ENV{DEBUG};
 
 	# Sanitize $url_path & $query_string
@@ -153,7 +164,7 @@ REQUEST_DIRECT:
 	}
 
 	# Only cache when HTTP 200 & nice headers
-	if ($status == 200 && is_fresh(%reply_headers)) {
+	if (!$ENV{NO_CACHE} && $status == 200 && is_fresh(%reply_headers)) {
 		# Ensure the directory exists
 		my $cache_dirname = dirname($cache_filename);
 		print STDERR "$cache_filename, $cache_dirname\n" if $ENV{DEBUG};
@@ -201,10 +212,37 @@ sub copy_data_mono {
 	my $src = shift;
 	my @dsts = @_;
 
-	print "copy_data_mono($src, @dsts)\n" if $ENV{DEBUG};
+	if ($ENV{DEBUG}) {
+		no warnings;
+		print STDERR "copy_data_mono($src, @dsts)\n"
+	}
 
 	my $buf;
 	while (my $read_len = read($src, $buf, $BUFFER_SIZE)) {
+		print STDERR "r($read_len)\n" if $ENV{DEBUG};
+		for my $dst (@dsts) {
+			# Ignore undef $dst, this makes it much more flexible
+			next unless $dst;
+
+			# write() is *not* the opposite of read(), print() is.
+			print $dst $buf;
+		}
+	}
+}
+
+# Using a copy/pasted version for SSL, as it needs sysread()
+sub copy_rawdata_mono {
+	my $src = shift;
+	my @dsts = @_;
+
+	if ($ENV{DEBUG}) {
+		no warnings;
+		print STDERR "copy_data_mono($src, @dsts)\n"
+	}
+
+	my $buf;
+	while (my $read_len = sysread($src, $buf, $BUFFER_SIZE)) {
+		print STDERR "r($read_len)\n" if $ENV{DEBUG};
 		for my $dst (@dsts) {
 			# Ignore undef $dst, this makes it much more flexible
 			next unless $dst;
@@ -249,4 +287,55 @@ sub parse_http_date {
 	my $epoch = eval { timegm $sec, $min, $hour, $dom, $mon, $year };
 	print STDERR "parse_http_date($http_date)=$epoch\n" if $ENV{DEBUG};
 	return $epoch;
+}
+
+# Handle CONNECT for HTTPS)
+sub _connect {
+	my ($url, $accept) = @_;
+
+	# Slurps the headers
+	while (my $line = <$accept>) {
+		# Ignore headers
+		print STDERR "h: $line" if $ENV{DEBUG};
+
+		last if $line =~ m/^\s*$/;
+	}
+
+	print STDERR "connecting to $url\n" if $ENV{DEBUG};
+	my $upstream = IO::Socket::INET->new(
+		PeerAddr => $url,
+		Proto => "tcp",
+	);
+
+	# Failed
+	if (! $upstream) {
+		print $accept "HTTP/1.0 500 Connection failed\r\n";
+		print $accept "\r\n";
+
+		return;
+	}
+
+	print STDERR "connection ok\n" if $ENV{DEBUG};
+	print $accept "HTTP/1.0 200 Connection OK\r\n";
+	print $accept "\r\n";
+
+	# Bi-di connection, via forking
+	my ($src, $dst);
+
+	my $pid = fork();
+	if ($pid) {
+		# Main, remote -> local
+		$src = $upstream;
+		$dst = $accept;
+	} else {
+		# Child, local -> remote
+		$src = $accept;
+		$dst = $upstream;
+	}
+
+	# pass upstream to downstream, and writing it locally
+	copy_rawdata_mono($src, $dst);
+
+	# Exiting if child
+	exit 0 unless $pid;
 }
