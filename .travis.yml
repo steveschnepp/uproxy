@@ -1,0 +1,18 @@
+language: perl
+
+notifications:
+  email: true
+
+matrix:
+  # we don't need to continue any build when 1 test is failing.
+  fast_finish: true
+
+env:
+
+before_install:
+
+script:
+	- perl -c uproxy
+
+# Using the container-based infrastructure
+sudo: false
