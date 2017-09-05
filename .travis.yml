@@ -14,8 +14,11 @@ matrix:
   # we don't need to continue any build when 1 test is failing.
   fast_finish: true
 
+install:
+  - rm -Rf cache
+
 script:
-  perl -c uproxy
+  - perl -c uproxy
 
 # Using the container-based infrastructure
 sudo: false
